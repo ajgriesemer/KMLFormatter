@@ -4,12 +4,14 @@ const { DOMParser } = require('xmlDom');
 const { XMLSerializer } = require('xmlDom');
 const parseKML = require('parse-kml');
 
+var turf = require('turf');
+var union = require('@turf/union');
 var dissolve = require('@turf/dissolve');
 var xpath = require('xpath');
-
+var format = require('xml-formatter');
 
 (async () => {
-    var dom = await importKmz("Amazon.kmz");
+    var dom = await importKmz("_input/Amazon.kmz");
     var data = await extractKmzData(dom);
     await createNewKmz(data);
 
@@ -53,25 +55,60 @@ async function importKmz(path){
 ////////////////////////////////
 async function extractKmzData(oldDom){
     var kmlData = {
-        lines: [
+        elements: [
             {name: 'Curbs',
-             color: 'ff003efe'},
+             type: 'line',
+             inputColor: 'ff003efe',
+             lineColor: 'ff000000'},
             {name: '1',
-            color: 'fffefe00'},
+            type: 'line',
+            inputColor: 'fffefe00',
+            lineColor: 'ff000000'},
             {name: 'Grid',
-            color: 'ff7f7f7f'}
-        ],
-        rings: [
-            {name: 'Letters',
-            color: 'ff323232'}
-        ],
-        fills: [
+            type: 'line',
+            inputColor: 'ff7f7f7f',
+            lineColor: 'ff7f7f7f'},
+            {name: 'Dock',
+            type: 'polyline',
+            inputColor: 'ff00fefe',
+            lineColor: 'ff7f7f7f'},
+            // {name: 'Stairs', // Too many things are red
+            // type: 'line',
+            // inputColor: 'ff0000fe',
+            // lineColor: 'ff0000fe'},
+
             {name: 'Pond',
-            color: 'ff00984b'},
+            type: 'fill',
+            inputColor: 'ff00984b',
+            polyColor: 'CCff2000',
+            lineWidth: 0},
+
             {name: 'Building',
-            color: 'ff7edefe'},
-            {name: 'Parking',
-            color: 'ff7f7f7f'}
+            type: 'fill',
+            inputColor: 'ff7edefe',
+            polyColor: 'CC00A5FF',
+            lineColor: 'ff000000',
+            lineWidth: 1},
+
+            // {name: 'BuildingOutline', // Building outline is brought in by building fill
+            // type: 'polyline',
+            // inputColor: 'fffe0000',
+            // lineColor: 'ff000000'},
+            {name: 'ParkingLot',
+            type: 'fill',
+            inputColor: 'ff7f7f7f',
+            polyColor: 'CC7f7f7f',
+            lineWidth: 0
+            },
+            {name: 'ParkingLines',
+            type: 'line',
+            inputColor: 'ffbfbfbf',
+            lineColor: 'ffbfbfbf'},
+            {name: 'Letters',
+            type: 'ring',
+            inputColor: 'ff323232',
+            lineColor: 'CC000000',
+            drawOrder: 1},
         ]
     };
     // Get xpath search with namespace
@@ -88,57 +125,112 @@ async function extractKmzData(oldDom){
     // Get the document name
     kmlData.name = selectKmlNs("//kmlns:Document/kmlns:name", oldDom)[0].firstChild.nodeValue;
 
-    kmlData.lines.forEach((line) => {
-        line.data = folders.filter((f)=> {
-            if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0] !== undefined){
-                if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0].data == line.color){
-                    if(selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString", f).length > 0){
-                        return true;
+    kmlData.elements.forEach((element) => {
+        if(element.type == 'line'){
+            element.data = folders.filter((f)=> {
+                if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0] !== undefined){
+                    if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0].data == element.inputColor){
+                        if(selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString", f).length > 0){
+                            return true;
+                        }
                     }
                 }
-            }
-            else {
-                return false
-            }
-        }).map((f) => {
-            return {coordinates: selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates/text()", f)[0].data}
-        })
-    })
-    kmlData.rings.forEach((ring) => {
-        ring.data = folders.filter((f)=> {
-            return selectKmlNs("kmlns:Placemark[kmlns:name[contains(text(), '2D Polyline')]]", f).length > 0
-        }).map((f) => {
-            const lineStrings = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates", f);
-            var coords = "", first;
-            lineStrings.forEach((ls,i) => {
-                const coordinate = ls.firstChild.nodeValue.match(/(\S+)/)[0]
-                coords += coordinate + " "
-                if(i == 0){
-                    first = coordinate
+                else {
+                    return false
                 }
+            }).map((f) => {
+                return {coordinates: selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates/text()", f)[0].data}
             })
-            coords += first 
-            return {coordinates: coords}
-        })
-    })
-    kmlData.fills.forEach((fill) => {
-        var fillsData = folders.filter((f)=> {
-            if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:PolyStyle/kmlns:color/text()", f)[0] !== undefined){
-                if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:PolyStyle/kmlns:color/text()", f)[0].data == fill.color){
-                    if(selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:Polygon/kmlns:outerBoundaryIs", f).length > 0){
-                        return true;
+        } if(element.type == 'polyline'){
+            element.data = folders.filter((f)=> {
+                if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0] !== undefined){
+                    if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0].data == element.inputColor){
+                        if(selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString", f).length > 0){
+                            return true;
+                        }
                     }
                 }
-            }
-            else {
-                return false
-            }
-        }).map((f) => {
-            var ringCoordinates = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:Polygon/kmlns:outerBoundaryIs/kmlns:LinearRing/kmlns:coordinates/text()", f)
-                    .map(r => r.data.match(/(\S+)/g))
-            return {coordinates: ringCoordinates}
-        })
-        fill.data = fillsData[0];
+                else {
+                    return false
+                }
+            }).map((f) => {selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates", f)[0].data
+                var polylines = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates/text()", f).map((pl) => pl.data.match(/(\S+)/g))
+                var coordinates = polylines.reduce((acc,current,index) => {
+                   return acc.concat(current[1])
+                })
+                return {coordinates: coordinates}
+            })
+        } else if(element.type == 'ring'){
+            element.data = folders.filter((f)=> {
+                return selectKmlNs("kmlns:Placemark[kmlns:name[contains(text(), '2D Polyline')]]", f).length > 0
+            }).map((f) => {
+                const lineStrings = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates", f);
+                var coords = "", first;
+                lineStrings.forEach((ls,i) => {
+                    const coordinate = ls.firstChild.nodeValue.match(/(\S+)/)[0]
+                    coords += coordinate + " "
+                    if(i == 0){
+                        first = coordinate
+                    }
+                })
+                coords += first 
+                return {coordinates: coords}
+            })
+        } else if(element.type == 'fill'){
+            var fillsData = folders.filter((f)=> {
+                if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:PolyStyle/kmlns:color/text()", f)[0] !== undefined){
+                    if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:PolyStyle/kmlns:color/text()", f)[0].data == element.inputColor){
+                        if(selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:Polygon/kmlns:outerBoundaryIs", f).length > 0){
+                            return true;
+                        }
+                    }
+                }
+                else {
+                    return false
+                }
+            }).map((f) => {
+                var ringCoordinates = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:Polygon/kmlns:outerBoundaryIs/kmlns:LinearRing/kmlns:coordinates/text()", f)
+                        .map(r => {
+                            return r.data.match(/(\S+)/g).map(c => {
+                                return c.split(',').splice(0,2).map(n => {
+                                    return parseFloat(parseFloat(n).toFixed(6))
+                                })
+                            })
+                        })
+                var features = ringCoordinates.map(rc => {
+                    return turf.polygon([rc])
+                })
+                // var test = turf.featureCollection([
+                //     turf.polygon([[
+                //         [-121.572780,38.699508],
+                //         [-121.572706,38.699503],
+                //         [-121.572788,38.699503],
+                //         [-121.572780,38.699508]
+                //                  ]], {combine: 'yes'}),
+                //     turf.polygon([[
+                //         [-121.572780,38.699508],
+                //         [-121.572715,38.699507],
+                //         [-121.572706,38.699503],
+                //         [-121.572780,38.699508]
+                //                 ]], {combine: 'yes'}),
+                // ])
+                // var dissolvedTest = dissolve(test, {propertyName: 'combine'});
+                // var features2 = turf.featureCollection([
+                //     turf.polygon([[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]], {combine: 'yes'}),
+                //     turf.polygon([[[0, -1], [0, 0], [1, 0], [1, -1], [0,-1]]], {combine: 'yes'}),
+                //     turf.polygon([[[1,-1],[1, 0], [2, 0], [2, -1], [1, -1]]], {combine: 'no'}),
+                //   ]);
+                
+                //   var dissolved2 = dissolve(features2, {propertyName: 'combine'});
+
+                var dissolved = dissolve(turf.featureCollection(features))
+                // var unionized = features.reduce((acc, cv) => {
+                //     return turf.union(acc,cv)
+                // });
+                return {coordinates: dissolved.features}
+            })
+            element.data = fillsData;
+        }
     })
 
     return kmlData;
@@ -157,82 +249,114 @@ async function createNewKmz(kmlData){
     const newDocument = kml.appendChild(newDom.createElement('Document'))
     // Set name
     newDocument.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(kmlData.name))
-
-    kmlData.lines.forEach(line => {
-        var styleTemplate = `<Style id="${line.name}">
-          <LineStyle>
-            <color>${line.color}</color>
-            <width>1</width>
-          </LineStyle>
-        </Style>`
-        newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
-    
-        var placemark = newDocument.appendChild(newDom.createElement('Placemark'))
-        placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${line.name}`))
-        placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${line.name}`))
-        var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
-    
-        line.data.forEach((l) => {
-            multiGeometry.appendChild(newDom.createElement("LineString"))
-                  .appendChild(newDom.createElement('coordinates'))
-                  .appendChild(newDom.createTextNode(l.coordinates))
-        })
-    })
-    kmlData.rings.forEach(ring => {
-        var styleTemplate = `<Style id="${ring.name}">
-          <PolyStyle>
-            <color>${ring.color}</color>
-          </PolyStyle>
-          <LineStyle>
-            <width>0</width>
-          </LineStyle>
-        </Style>`
-        newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
-    
-        const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
-        placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${ring.name}`))
-        placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${ring.name}`))
-        var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
+    var listStyle = newDocument.appendChild(newDom.createElement('Style'))
+        .appendChild(newDom.createElement('ListStyle'))
+    listStyle.appendChild(newDom.createElement('listItemType'))
+        .appendChild(newDom.createTextNode('checkHideChildren '))
+    var itemIcon = listStyle.appendChild(newDom.createElement('ItemIcon'))
+    itemIcon.appendChild(newDom.createElement('state'))
+        .appendChild(newDom.createTextNode('open'))
+    itemIcon.appendChild(newDom.createElement('href'))
+        .appendChild(newDom.createTextNode('https://drive.google.com/uc?export=download&id=13tLAMDm4u7bsKV38VRgB9UvBPtqPhF1p'))
+    kmlData.elements.forEach(element => {
+        if(element.type == 'line' | element.type == 'polyline'){
+            var styleTemplate = `<Style id="${element.name}">
+            <LineStyle>
+                <color>${element.lineColor}</color>
+                <width>1</width>
+            </LineStyle>
+            </Style>`
+            newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
         
-        ring.data.forEach((r) => {
-            multiGeometry.appendChild(newDom.createElement('Polygon'))
-            .appendChild(newDom.createElement('outerBoundaryIs'))
-            .appendChild(newDom.createElement('LinearRing'))
-            .appendChild(newDom.createElement('coordinates'))
-            .appendChild(newDom.createTextNode(r.coordinates))
-        })
-    })
-    kmlData.fills.forEach(fill => {
-        var styleTemplate = `<Style id="${fill.name}">
-          <PolyStyle>
-            <color>${fill.color}</color>
-          </PolyStyle>
-        </Style>`
-        newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
-    
-        const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
-        placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${fill.name}`))
-        placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${fill.name}`))
-        var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
+            var placemark = newDocument.appendChild(newDom.createElement('Placemark'))
+            placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
+            placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
+            var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
         
-        fill.data.coordinates.forEach((r) => {
-            multiGeometry.appendChild(newDom.createElement('Polygon'))
-            .appendChild(newDom.createElement('outerBoundaryIs'))
-            .appendChild(newDom.createElement('LinearRing'))
-            .appendChild(newDom.createElement('coordinates'))
-            .appendChild(newDom.createTextNode(r.join(' ')))
-        })
+            element.data.forEach((l) => {
+                multiGeometry.appendChild(newDom.createElement("LineString"))
+                    .appendChild(newDom.createElement('coordinates'))
+                    .appendChild(newDom.createTextNode(l.coordinates))
+            })
+        } else if (element.type == 'fill'){
+            var styleTemplate = `<Style id="${element.name}">
+            <PolyStyle>
+                <color>${element.polyColor}</color>
+            </PolyStyle>
+            <LineStyle>
+                ${element.lineWidth > 0 ? `<color>${element.lineColor}</color><width>${element.lineWidth}</width>` : '<width>0</width>'}
+            </LineStyle>
+            </Style>`
+            newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
+        
+            const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
+            placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
+            placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
+            var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
+            
+            element.data.forEach((d) => {
+                d.coordinates.forEach((r) => {
+                    if(r.geometry.type == 'Polygon'){
+                        r.geometry.coordinates.forEach((c) => {
+                            multiGeometry.appendChild(newDom.createElement('Polygon'))
+                            .appendChild(newDom.createElement('outerBoundaryIs'))
+                            .appendChild(newDom.createElement('LinearRing'))
+                            .appendChild(newDom.createElement('coordinates'))
+                            .appendChild(newDom.createTextNode(c.map(a => a.concat([0])).join(' \r\n')))
+                        })
+                    } else if(r.geometry.type == 'MultiPolygon'){
+                        r.geometry.coordinates.forEach((c) => {
+                            multiGeometry.appendChild(newDom.createElement('Polygon'))
+                            .appendChild(newDom.createElement('outerBoundaryIs'))
+                            .appendChild(newDom.createElement('LinearRing'))
+                            .appendChild(newDom.createElement('coordinates'))
+                            .appendChild(newDom.createTextNode(c[0].map(a => a.concat([0])).join(' \r\n')))
+                        })
+                    }
+                })
+            })       
+            // fill.data.coordinates.forEach((r) => {
+            //     multiGeometry.appendChild(newDom.createElement('Polygon'))
+            //     .appendChild(newDom.createElement('outerBoundaryIs'))
+            //     .appendChild(newDom.createElement('LinearRing'))
+            //     .appendChild(newDom.createElement('coordinates'))
+            //     .appendChild(newDom.createTextNode(r.join(' ')))
+            // })
+        } else if(element.type == 'ring'){
+            var styleTemplate = `<Style id="${element.name}">
+            <PolyStyle>
+                <color>${element.lineColor}</color>
+            </PolyStyle>
+            <LineStyle>
+                <width>0</width>
+            </LineStyle>
+            </Style>`
+            newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
+        
+            const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
+            placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
+            placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
+            var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
+            
+            element.data.forEach((r) => {
+                multiGeometry.appendChild(newDom.createElement('Polygon'))
+                .appendChild(newDom.createElement('outerBoundaryIs'))
+                .appendChild(newDom.createElement('LinearRing'))
+                .appendChild(newDom.createElement('coordinates'))
+                .appendChild(newDom.createTextNode(r.coordinates))
+            })
+        }
     })
     // Export KML to string
     const outputString = new XMLSerializer().serializeToString(newDom);
     // Replace KML file in Zip file with edited file
-    zip.file(kmlData.name + ".kml", outputString)
+    zip.file("_output/" + kmlData.name + ".kml", outputString)
 
     // Write to test kml file
-    fs.writeFileSync(kmlData.name + ".kml", outputString)
+    fs.writeFileSync("_output/" + kmlData.name + ".kml", format(outputString))
     
     zip.generateAsync({type: 'nodebuffer'}).then(function(content) {
-        fs.writeFileSync(kmlData.name + " test.kmz", content)
+        fs.writeFileSync("_output/" + kmlData.name + " test.kmz", content)
       }, function(err) {
         console.log(err);
       });

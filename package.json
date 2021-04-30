@@ -10,10 +10,13 @@
   "license": "ISC",
   "dependencies": {
     "@turf/dissolve": "^6.3.0",
+    "@turf/union": "^6.3.0",
     "jsdom": "^16.5.0",
     "jszip": "^3.6.0",
     "jszip-sync": "^3.2.1-sync",
     "parse-kml": "^1.0.1",
+    "turf": "^3.0.14",
+    "xml-formatter": "^2.4.0",
     "xmldom": "^0.5.0",
     "xpath": "0.0.32"
   }
