@@ -9,13 +9,22 @@ var union = require('@turf/union');
 var dissolve = require('@turf/dissolve');
 var xpath = require('xpath');
 var format = require('xml-formatter');
+const minifyXML = require("minify-xml").minify;
 
 (async () => {
     var files = fs.readdirSync("_input")
+    var logString = ""
     for (let i = 0; i < files.length; i++) { //
-        var dom = await importKmz("_input/" + files[i]);
-        var data = await extractKmzData(dom);
-        await createNewKmz(data);
+        try {
+            var dom = await importKmz("_input/" + files[i]);
+            var data = await extractKmzData(dom);
+            await createNewKmz(data);
+            logString += `"${data.name}", "Successfully Exported" \r\n`
+        } catch (error) {
+            logString += `"${data.name}", "${error}" \r\n`
+            console.log(`%c${data.name}, ${error}`, "color:red")
+        }
+        fs.writeFileSync("_logs/log.csv", logString)
     }
   })();
 
@@ -28,6 +37,7 @@ async function importKmz(path){
     // Load the KMZ file into JSZip 
     await zip.loadAsync(file)
 
+    console.log("KML Loaded: " + path)
     // For each file in the unzipped KMZ
     for (let i = 0; i < Object.keys(zip.files).length; i++) {
         // If the file is a kml file (there should only be one)
@@ -158,16 +168,13 @@ async function extractKmzData(oldDom){
                 return selectKmlNs("kmlns:Placemark[kmlns:name[contains(text(), '2D Polyline')]]", f).length > 0
             }).map((f) => {
                 const lineStrings = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates", f);
-                var coords = "", first;
-                lineStrings.forEach((ls,i) => {
-                    const coordinate = ls.firstChild.nodeValue.match(/(\S+)/)[0]
-                    coords += coordinate + " "
-                    if(i == 0){
-                        first = coordinate
-                    }
-                })
-                coords += first 
-                return {coordinates: coords}
+                var coordinates = lineStrings.map(ls => ls.firstChild.nodeValue.match(/(\S+)/)[0])
+
+                if (coordinates[0] != coordinates[coordinates.length - 1]){
+                    console.log(kmlData.name + " Letters were exported as lines not shapes!")
+                    throw "Letters were exported as lines not shapes"
+                }
+                return {coordinates: coordinates.join(" ")}
             })
         } else if(element.type == 'fill'){
             var fillsData = folders.filter((f)=> {
@@ -220,7 +227,7 @@ async function extractKmzData(oldDom){
                             }
                         }
                     } while (!(features.length == 1) & !(features.length == inputFeaturesLength))
-                    console.log(element.name + " " + features.length)
+                    //console.log(element.name + " " + features.length)
                 }
                 return {coordinates: features}
                  
@@ -232,6 +239,14 @@ async function extractKmzData(oldDom){
     return kmlData;
 }
 
+function shortenDegrees(f){
+    var g = parseFloat(f)
+    if(g==0){
+        return '0'
+    } else {
+        return g.toFixed(6)
+    }
+}
 
 ////////////////////
 // Create new KMZ //
@@ -242,19 +257,21 @@ async function createNewKmz(kmlData){
     const newDom = new DOMParser().parseFromString(`<?xml version="1.0" encoding="UTF-8"?>`)
     const kml = newDom.appendChild(newDom.createElement('kml'))
     kml.setAttribute("xmlns", kmlData.namespace)
+    kml.setAttribute("xmlns:gx", "http://www.google.com/kml/ext/2.2")
     // Create Document node for new XML document
     const newDocument = kml.appendChild(newDom.createElement('Document'))
     // Set name
     newDocument.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(kmlData.name))
     var listStyle = newDocument.appendChild(newDom.createElement('Style'))
         .appendChild(newDom.createElement('ListStyle'))
-    // listStyle.appendChild(newDom.createElement('listItemType'))
-    //     .appendChild(newDom.createTextNode('checkHideChildren '))
+    listStyle.appendChild(newDom.createElement('listItemType'))
+        .appendChild(newDom.createTextNode('checkHideChildren '))
     var itemIcon = listStyle.appendChild(newDom.createElement('ItemIcon'))
     itemIcon.appendChild(newDom.createElement('state'))
         .appendChild(newDom.createTextNode('open'))
     itemIcon.appendChild(newDom.createElement('href'))
         .appendChild(newDom.createTextNode('https://drive.google.com/uc?export=download&id=15iU5NU2rqEw31EWFEPBo-gHKFqk19JSm'))
+
     kmlData.elements.forEach(element => {
         if(element.data.length > 0){
             if(element.type == 'line' | element.type == 'polyline'){
@@ -275,7 +292,9 @@ async function createNewKmz(kmlData){
                         l.coordinates.forEach(c => {
                             multiGeometry.appendChild(newDom.createElement("LineString"))
                                 .appendChild(newDom.createElement('coordinates'))
-                                .appendChild(newDom.createTextNode(c))
+                                .appendChild(newDom.createTextNode(
+                                    c.map(e => e.split(',').map(f => shortenDegrees(f)))
+                                ))
                         })
                     })
             } else if (element.type == 'fill'){
@@ -334,7 +353,7 @@ async function createNewKmz(kmlData){
                                 .appendChild(newDom.createElement('outerBoundaryIs'))
                                 .appendChild(newDom.createElement('LinearRing'))
                                 .appendChild(newDom.createElement('coordinates'))
-                                .appendChild(newDom.createTextNode(c.map(a => a.concat([0])).join(' \r\n')))
+                                .appendChild(newDom.createTextNode(c.map(a => a.map(b => shortenDegrees(b)).concat([0])).join(' '))) // Switch to newline join for easier reading .join(' \r\n')))
                             })
                         } else if(r.geometry.type == 'MultiPolygon'){
                             r.geometry.coordinates.forEach((c) => {
@@ -342,7 +361,7 @@ async function createNewKmz(kmlData){
                                 .appendChild(newDom.createElement('outerBoundaryIs'))
                                 .appendChild(newDom.createElement('LinearRing'))
                                 .appendChild(newDom.createElement('coordinates'))
-                                .appendChild(newDom.createTextNode(c[0].map(a => a.concat([0])).join(' \r\n')))
+                                .appendChild(newDom.createTextNode(c[0].map(a => a.map(b => shortenDegrees(b)).concat([0])).join(' '))) // Switch to newline join for easier reading .join(' \r\n')))
                             })
                         }
                     })
@@ -376,7 +395,14 @@ async function createNewKmz(kmlData){
                     .appendChild(newDom.createElement('outerBoundaryIs'))
                     .appendChild(newDom.createElement('LinearRing'))
                     .appendChild(newDom.createElement('coordinates'))
-                    .appendChild(newDom.createTextNode(r.coordinates))
+                    .appendChild(newDom.createTextNode(
+                        r.coordinates.split(' ')
+                            .map(d => d.split(',')
+                                .map(f => shortenDegrees(f))
+                                .join(',')
+                            )
+                            .join(' ')
+                    ))
                 })
                 
             }
@@ -384,17 +410,33 @@ async function createNewKmz(kmlData){
     })
     // Export KML to string
     const outputString = new XMLSerializer().serializeToString(newDom);
-    // Replace KML file in Zip file with edited file
-    zip.file("_output/" + kmlData.name + ".kml", outputString)
+
+    //  Add output file to KMZ
+    const minifiedString = minifyXML(outputString)
+    const kmlSize = Math.ceil(minifiedString.length/1024) 
+    var zipSize
+    zip.file(kmlData.name + ".kml", minifiedString)
 
     // Write to test kml file
-    fs.writeFileSync("_output/" + kmlData.name + ".kml", format(outputString))
-    console.info('KML Written: ' + kmlData.name)
-
-
-    // zip.generateAsync({type: 'nodebuffer'}).then(function(content) {
-    //     fs.writeFileSync("_output/" + kmlData.name + " test.kmz", content)
-    //   }, function(err) {
-    //     console.log(err);
-    //   });
+    // fs.writeFileSync("_output/" + kmlData.name + ".kml", format(outputString))
+    if (kmlSize >= 10*1024){
+        throw "KML is 10 MB or larger"
+    }
+    await zip.generateAsync(
+        {type: 'nodebuffer',
+         compression: "DEFLATE",
+         compressionOptions: {
+            level: 9
+            }
+        }).then(function(content) {
+            zipSize = Math.ceil(content.length/1024)
+            if (zipSize >= 3*1024){
+                throw "KMZ is 3 MB or larger"
+            }
+            fs.writeFileSync("_output/" + kmlData.name + ".kmz", content)
+      }, function(err) {
+        console.log(err);
+      });
+    
+    console.info(`KML Written: ${kmlData.name}, KML Size: ${kmlSize} KB, Zip Size: ${zipSize} KB` )
 }
