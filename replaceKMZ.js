@@ -52,8 +52,6 @@ async function importKmz(path){
 
             // Parse the KML string using an XML parser
             const oldDom = new DOMParser().parseFromString(document)
-            var textNodes = xpath.select("//text()", oldDom)
-            textNodes = textNodes.filter((tn) => {return !/\S/.test(tn.data)}).forEach((tn) => {tn.parentNode.removeChild(tn)})
             return oldDom
         }
     }
@@ -210,24 +208,32 @@ async function extractKmzData(oldDom){
                 if(element.name != 'ParkingLot'){
                     // Iteratively dissolve polygons until either there is only 1 polygon left or no
                     // improvement is made from the last iteration
-                    do{
-                        var inputFeaturesLength = features.length
-                        var dissolved = dissolve(turf.featureCollection(features))
-                        features = []
-                        for (let i = 0; i < dissolved.features.length; i++) {
-                            const element = dissolved.features[i];
-                            if(element.geometry.type == 'Polygon'){
-                                features.push(turf.polygon([element.geometry.coordinates[0]]))
+                    try {
+                        var featuresBeforeError = features;
+                        do{
+                            var inputFeaturesLength = features.length
+                            console.count("counts")
+                            global.andrewsCount1++;
+                            var dissolved = dissolve(turf.featureCollection(features))
+                            features = []
+                            for (let i = 0; i < dissolved.features.length; i++) {
+                                const element = dissolved.features[i];
+                                if(element.geometry.type == 'Polygon'){
+                                    features.push(turf.polygon([element.geometry.coordinates[0]]))
+                                }
+                                
+                                if(element.geometry.type == 'MultiPolygon'){
+                                    element.geometry.coordinates.forEach(c => {
+                                        features.push(turf.polygon([c[0]]))
+                                    })
+                                }
                             }
-                            
-                            if(element.geometry.type == 'MultiPolygon'){
-                                element.geometry.coordinates.forEach(c => {
-                                    features.push(turf.polygon([c[0]]))
-                                })
-                            }
-                        }
-                    } while (!(features.length == 1) & !(features.length == inputFeaturesLength))
-                    //console.log(element.name + " " + features.length)
+                        } while (!(features.length == 1) & !(features.length == inputFeaturesLength))
+                        //console.log(element.name + " " + features.length)
+                    } catch (error) {
+                        features = featuresBeforeError;
+                        console.warn("Error dissolving parcels: " + error)
+                    }
                 }
                 return {coordinates: features}
                  
