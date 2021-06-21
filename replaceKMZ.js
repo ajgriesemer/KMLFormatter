@@ -113,7 +113,8 @@ async function extractKmzData(oldDom){
             type: 'fill',
             inputColor: 'ff7f7f7f',
             polyColor: 'CC7f7f7f',
-            lineWidth: 0},
+            //lineColor: 'ff000000',
+            lineWidth: 0}, // Parking lot outline is created by the curbs
 
             {name: 'ParkingLines',
             type: 'line',
@@ -167,11 +168,15 @@ async function extractKmzData(oldDom){
             }).map((f) => {
                 const lineStrings = selectKmlNs("kmlns:Placemark/kmlns:MultiGeometry/kmlns:LineString/kmlns:coordinates", f);
                 var coordinates = lineStrings.map(ls => ls.firstChild.nodeValue.match(/(\S+)/)[0])
-
                 if (coordinates[0] != coordinates[coordinates.length - 1]){
                     console.log(kmlData.name + " Letters were exported as lines not shapes!")
                     throw "Letters were exported as lines not shapes"
                 }
+                // coordinates = coordinates.map(c => {
+                //     var cs = c.split(",")
+                //     cs[2] = "2"
+                //     return cs.join(",")
+                // })
                 return {coordinates: coordinates.join(" ")}
             })
         } else if(element.type == 'fill'){
@@ -204,37 +209,36 @@ async function extractKmzData(oldDom){
                     // Expand the size of every polygon by an amount less than the precision that google earth renders
                     .map(f => turf.buffer(f, 0.0000001, 'degrees'))
 
-                // Skip the dissolve step on the parking lots until it starts working better
-                if(element.name != 'ParkingLot'){
-                    // Iteratively dissolve polygons until either there is only 1 polygon left or no
-                    // improvement is made from the last iteration
+
+                // Iteratively dissolve polygons until either there is only 1 polygon left or no
+                // improvement is made from the last iteration
+                
+                fs.writeFileSync("_logs/geojson.txt", JSON.stringify(features))
+                do{
                     try {
+                        var inputFeaturesLength = features.length
                         var featuresBeforeError = features;
-                        do{
-                            var inputFeaturesLength = features.length
-                            console.count("counts")
-                            global.andrewsCount1++;
-                            var dissolved = dissolve(turf.featureCollection(features))
-                            features = []
-                            for (let i = 0; i < dissolved.features.length; i++) {
-                                const element = dissolved.features[i];
-                                if(element.geometry.type == 'Polygon'){
-                                    features.push(turf.polygon([element.geometry.coordinates[0]]))
-                                }
-                                
-                                if(element.geometry.type == 'MultiPolygon'){
-                                    element.geometry.coordinates.forEach(c => {
-                                        features.push(turf.polygon([c[0]]))
-                                    })
-                                }
+                        var dissolved = dissolve(turf.featureCollection(features))
+                        features = []
+                        for (let i = 0; i < dissolved.features.length; i++) {
+                            const element = dissolved.features[i];
+                            if(element.geometry.type == 'Polygon'){
+                                features.push(turf.polygon(element.geometry.coordinates))
                             }
-                        } while (!(features.length == 1) & !(features.length == inputFeaturesLength))
-                        //console.log(element.name + " " + features.length)
+                            if(element.geometry.type == 'MultiPolygon'){
+                                throw "Dissolve returned MultiPolygon. Andrew didn't plan for this."
+                                // element.geometry.coordinates.forEach(c => {
+                                //     features.push(turf.polygon([c[0]]))
+                                // })
+                            }
+                        }
                     } catch (error) {
                         features = featuresBeforeError;
                         console.warn("Error dissolving parcels: " + error)
+                        break;
                     }
-                }
+                } while (!(features.length == 1) & !(features.length == inputFeaturesLength))
+
                 return {coordinates: features}
                  
             })
@@ -314,72 +318,32 @@ async function createNewKmz(kmlData){
                 </Style>`
                 newDocument.appendChild(new DOMParser().parseFromString(styleTemplate))
             
-                // if(element.name == 'Pond'){
-                //     element.data.forEach((d) => {
-                //         d.coordinates.forEach((r) => {
-                //             if(r.geometry.type == 'Polygon'){
-                //                 r.geometry.coordinates.forEach((c) => {
-                //                     const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
-                //                     placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
-                //                     placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
-
-                //                     placemark.appendChild(newDom.createElement('Polygon'))
-                //                     .appendChild(newDom.createElement('outerBoundaryIs'))
-                //                     .appendChild(newDom.createElement('LinearRing'))
-                //                     .appendChild(newDom.createElement('coordinates'))
-                //                     .appendChild(newDom.createTextNode(c.map(a => a.concat([0])).join(' \r\n')))
-                //                 })
-                //             } else if(r.geometry.type == 'MultiPolygon'){
-                //                 r.geometry.coordinates.forEach((c) => {
-                                    
-                //                     const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
-                //                     placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
-                //                     placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
-                //                     placemark.appendChild(newDom.createElement('Polygon'))
-                //                     .appendChild(newDom.createElement('outerBoundaryIs'))
-                //                     .appendChild(newDom.createElement('LinearRing'))
-                //                     .appendChild(newDom.createElement('coordinates'))
-                //                     .appendChild(newDom.createTextNode(c[0].map(a => a.concat([0])).join(' \r\n')))
-                //                 })
-                //             }
-                //         })
-                //     })      
-                // } else {
-
-                const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
-                placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
-                placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
-                var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
-                
                 element.data.forEach((d) => {
                     d.coordinates.forEach((r) => {
                         if(r.geometry.type == 'Polygon'){
-                            r.geometry.coordinates.forEach((c) => {
-                                multiGeometry.appendChild(newDom.createElement('Polygon'))
-                                .appendChild(newDom.createElement('outerBoundaryIs'))
-                                .appendChild(newDom.createElement('LinearRing'))
-                                .appendChild(newDom.createElement('coordinates'))
-                                .appendChild(newDom.createTextNode(c.map(a => a.map(b => shortenDegrees(b)).concat([0])).join(' '))) // Switch to newline join for easier reading .join(' \r\n')))
+                            const placemark = newDocument.appendChild(newDom.createElement('Placemark'))
+                            placemark.appendChild(newDom.createElement('name')).appendChild(newDom.createTextNode(`${element.name}`))
+                            placemark.appendChild(newDom.createElement('styleUrl')).appendChild(newDom.createTextNode(`#${element.name}`))
+                            const polygon = placemark.appendChild(newDom.createElement('Polygon'))
+                            r.geometry.coordinates.forEach((c,i) => {
+                                // According to the GeoJSON Spec: https://geojson.org/geojson-spec.html
+                                // For Polygons with multiple rings, the first must be the exterior ring and any others must be interior rings or holes.
+                                if(i == 0){
+                                    polygon.appendChild(newDom.createElement('outerBoundaryIs'))
+                                    .appendChild(newDom.createElement('LinearRing'))
+                                    .appendChild(newDom.createElement('coordinates'))
+                                    .appendChild(newDom.createTextNode(c.map(a => a.map(b => shortenDegrees(b)).concat([0])).join(' '))) // Switch to newline join for easier reading .join(' \r\n')))
+                                } else {
+                                    polygon.appendChild(newDom.createElement('innerBoundaryIs'))
+                                    .appendChild(newDom.createElement('LinearRing'))
+                                    .appendChild(newDom.createElement('coordinates'))
+                                    .appendChild(newDom.createTextNode(c.map(a => a.map(b => shortenDegrees(b)).concat([0])).join(' '))) // Switch to newline join for easier reading .join(' \r\n')))
+                                }
                             })
-                        } else if(r.geometry.type == 'MultiPolygon'){
-                            r.geometry.coordinates.forEach((c) => {
-                                multiGeometry.appendChild(newDom.createElement('Polygon'))
-                                .appendChild(newDom.createElement('outerBoundaryIs'))
-                                .appendChild(newDom.createElement('LinearRing'))
-                                .appendChild(newDom.createElement('coordinates'))
-                                .appendChild(newDom.createTextNode(c[0].map(a => a.map(b => shortenDegrees(b)).concat([0])).join(' '))) // Switch to newline join for easier reading .join(' \r\n')))
-                            })
-                        }
+                        } 
                     })
                 })     
                 
-                // fill.data.coordinates.forEach((r) => {
-                //     multiGeometry.appendChild(newDom.createElement('Polygon'))
-                //     .appendChild(newDom.createElement('outerBoundaryIs'))
-                //     .appendChild(newDom.createElement('LinearRing'))
-                //     .appendChild(newDom.createElement('coordinates'))
-                //     .appendChild(newDom.createTextNode(r.join(' ')))
-                // })
             } else if(element.type == 'ring'){
                 var styleTemplate = `<Style id="${element.name}">
                 <PolyStyle>
@@ -397,8 +361,10 @@ async function createNewKmz(kmlData){
                 var multiGeometry = placemark.appendChild(newDom.createElement('MultiGeometry'))
                 
                 element.data.forEach((r) => {
-                    multiGeometry.appendChild(newDom.createElement('Polygon'))
-                    .appendChild(newDom.createElement('outerBoundaryIs'))
+                    var polygon = multiGeometry.appendChild(newDom.createElement('Polygon'))
+                    // polygon.appendChild(newDom.createElement('altitudeMode'))
+                    //               .appendChild(newDom.createTextNode('relativeToGround'))
+                    polygon.appendChild(newDom.createElement('outerBoundaryIs'))
                     .appendChild(newDom.createElement('LinearRing'))
                     .appendChild(newDom.createElement('coordinates'))
                     .appendChild(newDom.createTextNode(
@@ -424,9 +390,9 @@ async function createNewKmz(kmlData){
     zip.file(kmlData.name + ".kml", minifiedString)
 
     // Write to test kml file
-    // fs.writeFileSync("_output/" + kmlData.name + ".kml", format(outputString))
+    //fs.writeFileSync("_output/" + kmlData.name + ".kml", format(outputString))
     if (kmlSize >= 10*1024){
-        throw "KML is 10 MB or larger"
+        console.warn("KML is 10 MB or larger at "+ kmlSize)
     }
     await zip.generateAsync(
         {type: 'nodebuffer',
