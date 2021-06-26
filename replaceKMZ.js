@@ -15,15 +15,15 @@ const minifyXML = require("minify-xml").minify;
     var files = fs.readdirSync("_input")
     var logString = ""
     for (let i = 0; i < files.length; i++) { //
-        try {
+        //try {
             var dom = await importKmz("_input/" + files[i]);
             var data = await extractKmzData(dom);
             await createNewKmz(data);
             logString += `"${data.name}", "Successfully Exported" \r\n`
-        } catch (error) {
-            logString += `"${data.name}", "${error}" \r\n`
-            console.log(`%c${data.name}, ${error}`, "color:red")
-        }
+        // } catch (error) {
+        //     logString += `"${data.name}", "${error}" \r\n`
+        //     console.log(`%c${data.name}, ${error}`, "color:red")
+        // }
         fs.writeFileSync("_logs/log.csv", logString)
     }
   })();
@@ -142,7 +142,7 @@ async function extractKmzData(oldDom){
     // Get the document name
     kmlData.name = selectKmlNs("//kmlns:Document/kmlns:name", oldDom)[0].firstChild.nodeValue;
 
-    kmlData.elements.forEach((element) => {
+    kmlData.elements.forEach((element, elementIndex) => {
         if(element.type == 'line'){
             element.data = folders.filter((f)=> {
                 if(selectKmlNs("kmlns:Placemark/kmlns:Style/kmlns:LineStyle/kmlns:color/text()", f)[0] !== undefined){
@@ -218,7 +218,29 @@ async function extractKmzData(oldDom){
                     try {
                         var inputFeaturesLength = features.length
                         var featuresBeforeError = features;
-                        var dissolved = dissolve(turf.featureCollection(features))
+                        try{
+                            var dissolved = dissolve(turf.featureCollection(features))
+                        }
+                        catch{
+                            // Handles an error in the Turf dissolve function.
+                            // If dissolve fails, trim the number of digits after the decimal
+                            // Reference: https://github.com/mfogel/polygon-clipping/issues/91#issuecomment-546603188
+                            features = features.map(f => {
+                                f.geometry.coordinates = f.geometry.coordinates.map(coordinates => {
+                                    return coordinates.map(degreeArray => {
+                                        return degreeArray.map(degree => {
+                                            if(degree.toString().split(".")[1].length || 0 > 6){
+                                                return +degree.toFixed(6) //For some reason the plus sign is all you need to convert the string output of toFixed to a number. Javascript is weird.
+                                            } else {
+                                                return degree
+                                            }
+                                        })
+                                    })
+                                })
+                                return f
+                            })
+                            var dissolved = dissolve(turf.featureCollection(features))
+                        }
                         features = []
                         for (let i = 0; i < dissolved.features.length; i++) {
                             const element = dissolved.features[i];
@@ -226,15 +248,15 @@ async function extractKmzData(oldDom){
                                 features.push(turf.polygon(element.geometry.coordinates))
                             }
                             if(element.geometry.type == 'MultiPolygon'){
-                                throw "Dissolve returned MultiPolygon. Andrew didn't plan for this."
-                                // element.geometry.coordinates.forEach(c => {
-                                //     features.push(turf.polygon([c[0]]))
-                                // })
+                                element.geometry.coordinates.forEach(coordinate => {
+                                    features.push(turf.polygon(coordinate))
+                                });
                             }
                         }
                     } catch (error) {
                         features = featuresBeforeError;
                         console.warn("Error dissolving parcels: " + error)
+                        console.log(elementIndex)
                         break;
                     }
                 } while (!(features.length == 1) & !(features.length == inputFeaturesLength))
